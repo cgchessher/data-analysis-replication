@@ -5,4 +5,144 @@ format: html
 editor: visual
 ---
 
-## hello
+# Data Analysis Replication
+
+### Caroline Chessher
+
+### Based on Carvell et al. 2017 ***Nature***
+
+------------------------------------------------------------------------
+
+\*Describe analysis here\*
+
+```{r}
+library(tidyverse)
+
+f <- "https://raw.githubusercontent.com/cgchessher/data-analysis-replication/refs/heads/main/data/Carvell_etal_IPI_Bombus_family_lineage_and_landscape_quality_data.csv"
+
+d <- read_csv(f, col_names = TRUE)
+
+# Subsetting the data into only family lineages which had > 1 capture, because this is a requirement to estimate colony location. Knowing the colony location is critical for our analysis because we need to know the approximate colony location in order to assess how habitat quality impacts their family lineage survival probability.
+
+d <- d |> filter(W1 > 1)
+
+```
+
+new stuff
+
+```{r}
+N <- as.matrix(d[, c("Q1", "W1", "Q2")])
+F <- (N > 0) * 1
+X <- d$Col.Queen_Visited_Spring_Flower_Cover_Prop   # predictor
+
+#removing all zero rows
+S <- rowSums(N)
+N <- N[S > 0, ]
+F <- F[S > 0, ]
+X <- X[S > 0]
+```
+
+covariate likelihood
+
+```{r}
+
+ilt <- function(x) exp(x)/(1+exp(x))
+
+tpois <- function(a, lam){
+  dpois(a, lam)/(1 - dpois(0, lam))
+}
+
+totlike_cov <- function(x, F, N, X){
+
+  phi1 <- ilt(x[1])
+  beta0 <- x[2]
+  beta1 <- x[3]
+  lambda <- exp(x[4:5])
+
+  phi2 <- ilt(beta0 + beta1 * X)
+
+  n <- nrow(F)
+  part1 <- rep(0, n)
+
+  for (i in 1:n){
+
+    cf <- min(which(F[i,] == 1))
+    cl <- max(which(F[i,] == 1))
+
+    chi3 <- 1
+    chi2 <- (1 - phi2[i]) + phi2[i] * dpois(0, lambda[2])
+    chi1 <- (1 - phi1) + phi1 * dpois(0, lambda[1]) * chi2
+
+    if (cf == 1 & cl == 1){
+      part1[i] <- log(chi1)
+    }
+
+    if (cf == 1 & cl == 2){
+      part1[i] <- log(phi1 * dpois(N[i,2], lambda[1]) * chi2)
+    }
+
+    if (cf == 1 & cl == 3){
+      part1[i] <- log(phi1 * dpois(N[i,2], lambda[1]) *
+                      phi2[i] * dpois(N[i,3], lambda[2]))
+    }
+
+    if (cf == 2 & cl == 2){
+      part1[i] <- log(tpois(N[i,2], lambda[1]) * chi2)
+    }
+
+    if (cf == 2 & cl == 3){
+      part1[i] <- log(tpois(N[i,2], lambda[1]) *
+                      phi2[i] * dpois(N[i,3], lambda[2]))
+    }
+
+    if (cf == 3 & cl == 3){
+      part1[i] <- log(tpois(N[i,3], lambda[2]))
+    }
+  }
+
+  return(-sum(part1))
+}
+```
+
+fit model
+
+```{r}
+xstart <- c(0, 0, 0, 1, 1)
+
+res <- optim(xstart, totlike_cov,
+             F = F, N = N, X = X,
+             hessian = TRUE,
+             control = list(maxit = 50000, reltol = 1e-10))
+```
+
+test habitat effect
+
+```{r}
+
+beta1_hat <- res$par[3]
+
+# standard error
+vcov <- solve(res$hessian)
+se_beta1 <- sqrt(vcov[3,3])
+
+z <- beta1_hat / se_beta1
+p_value <- 2 * (1 - pnorm(abs(z)))
+
+beta1_hat
+p_value
+```
+
+figure
+
+```{r}
+x_seq <- seq(min(X), max(X), length.out = 100)
+
+beta0_hat <- res$par[2]
+beta1_hat <- res$par[3]
+
+phi2_pred <- ilt(beta0_hat + beta1_hat * x_seq)
+
+plot(x_seq, phi2_pred, type = "l", lwd = 3,
+     xlab = "Habitat",
+     ylab = "Survival probability (phi2)")
+```
