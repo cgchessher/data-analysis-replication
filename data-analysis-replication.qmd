@@ -1,19 +1,45 @@
 ---
-title: "data-analysis-replication"
-author: "cc"
+title: "Data Analysis Replication"
+author: "Caroline Chessher"
 format: html
 editor: visual
 ---
 
-# Data Analysis Replication
-
-### Caroline Chessher
-
-### Based on Carvell et al. 2017 ***Nature***
+Based on Carvell et al. 2017 *Nature* - **Bumblebee family lineage survival is enhanced in high-quality landscapes**
 
 ------------------------------------------------------------------------
 
-\*Describe analysis here\*
+### Description of Paper Analyses
+
+#### *Their main finding*
+
+This paper was a first-of-its-kind in the bumblebee ecology world, because largely bumblebees have cryptic life cycles which are notoriously difficult to sample. **Genetic mark-recapture** across key life stages (e.g., from spring nest-founding queens to workers, to new sister queens in the following spring) had never been employed in bumblebees before on this scale, offering huge insight into their lives.
+
+As in the title, Carvell et al. were able to tie **survival probability** (estimated via **maximum likelihood**) from one season to the next, including queen overwintering, to higher/more quality floral resources in the landscape. More specifically, they were able to estimate survival probabilities for key bumblebee life history stages, which are notoriously cryptic, and therefore difficult to measure in the wild. They also included detailed habitat surveys across the sampled landscape, which allowed them to **assess the importance of habitat traits on survival**. For instance, percent cover of seminatural vegetation in 1000 radius from the estimated colony location was the best single predictor of lineage survival probability.
+
+#### *Analysis in original paper*
+
+Carvell et al. created a modification of a standard Cormack-Jolly-Seber (CJS) genetic mark-recapture model to study patterns of survival over time in colonial species, like bumblebees. They used this analysis to measure the *apparent* survival of bumblebee *lineages* (not recapturing individuals) between years, which is to say, between generations/colony cycles, as bumblebees are an annual species. From this, they were able to tie this 'lineage survival' probability, which was parameterized by their data using their CJS model, to floral resources in the landscape.
+
+Carvell et al. provide detailed code for their CJS model, which outputs overwintering survival probability, *i.e.* , from workers in year 1 to spring queens in year 2 from the same lineage, $\text(\phi_{2i})$
+
+as a global parameter, where *i* represents a given family lineage. This parameter represents an estimate of the population-level survival rate for all colonies, which is a shared likelihood calculated with their maximum likelihood model. The likelihood that each lineage contributes will be important for the main replication, the estimation of **regression** coefficients (see next subsection).
+
+I will be using their provided code to repeat the parameter and model fitting process, so that I can fit:
+
+$$
+\text{logit}(\phi_{2i}) = \beta_0 + \beta_1 X_i.
+$$
+
+The primary information from the data table I will be using is the row-wise vector (Q1, W1, Q2), which represents the number of *detected* queens in year 1, workers in year 1, and queens in year 2 from a particular family lineage.
+
+#### *My replication analysis*
+
+I will be replicating main regression analysis they did to look at the relationships between habitat/land-use variables and per-colony survival probability, shown in Figure 2 (a-d) in the paper. They only did this analysis for colonies/lineages which had a good estimator of approximate colony location (meaning that they caught \>1 worker from that colony). They have also provided habitat data per-row for each lineage, meaning that they have used the approximated colony location and extracted landscape-level habitat variables from their associated LIDAR dataset and created variables based on that (e.g., seminatural habitat in 1000 m radius of the approximated colony location).
+
+### Replication Code
+
+#### Loading in the data 
 
 ```{r}
 library(tidyverse)
@@ -22,127 +48,428 @@ f <- "https://raw.githubusercontent.com/cgchessher/data-analysis-replication/ref
 
 d <- read_csv(f, col_names = TRUE)
 
-# Subsetting the data into only family lineages which had > 1 capture, because this is a requirement to estimate colony location. Knowing the colony location is critical for our analysis because we need to know the approximate colony location in order to assess how habitat quality impacts their family lineage survival probability.
+head(d)
 
-d <- d |> filter(W1 > 1)
+# Subsetting the data into only family lineages which had > 1 capture, because this is a requirement to estimate colony location. Knowing the colony location is critical for our later regression analysis because we need to know the approximate colony location in order to assess how habitat quality impacts their family lineage survival probability. 
+
+d_sub <- d |> filter(W1 > 1)
 
 ```
 
-new stuff
+#### Parameter and variable definitions
+
+To reiterate, parameters definitions are:
+
+-   Survival probability in a time interval *X* for a particular family lineage *i*:
+
+$\text(\phi_{Xi})$
+
+-   Estimated Poisson mean counts of workers (*x* = 1) and queens (*x* = 2), aka detection:
+
+$\text(\lambda_{x})$
+
+-   Recapture probability for a time interval *X*:
+
+$\text(P_{X})$
+
+-   Probability of the colony subsequently remaining undetected, where *j* is the sampling "round" or "event". There are 3 samples in the dataset (Q1, W1, Q2). If *j* = 3, then $\text(\chi_{3}) = 1$, because no more sampling events remain.
+
+$\text(\chi_{j})$
+
+#### Mark-recapture model code (from Carvell paper)
+
+The following code is provided by Carvell et al. and is used to calculate survival (phi) and detection (p) probability via maximum-likelihood estimation.
 
 ```{r}
-N <- as.matrix(d[, c("Q1", "W1", "Q2")])
+###
+# 1. Prepare data
+###
+
+# Build N matrix from variables in data table (Q1, W1, Q2)
+# Make sure to include ALL data, because each row gives us good information! i.e., dont just use rows from the subsetted data, because no worker recapture (W1 = 0) is important information to parameterize phi(1) and p1. 
+
+N <- as.matrix(d[, c("Q1", "W1", "Q2")]) #just detection count matrix per lineage (each row a lineage)
+
+# Making the mark-recapture matrix
 F <- (N > 0) * 1
-X <- d$Col.Queen_Visited_Spring_Flower_Cover_Prop   # predictor
 
-#removing all zero rows
-S <- rowSums(N)
-N <- N[S > 0, ]
-F <- F[S > 0, ]
-X <- X[S > 0]
+
 ```
 
-covariate likelihood
+Code for logistic and truncated Poisson functions from Carvell supplement:
+
+```{r}
+###
+# 2 - Functions from Carvell et al.
+###
+
+# logistic transform
+ilt <- function(x) exp(x) / (1 + exp(x))
+
+# truncated Poisson
+tpois <- function(a, lam) dpois(a, lam) / (1 - dpois(0, lam))
+
+```
+
+Code for likelihood function from Carvell supplement:
+
+*Please note*: I have spent some time with this model and tried to understand to the best of my abilities!
 
 ```{r}
 
-ilt <- function(x) exp(x)/(1+exp(x))
+###
+# 3 - Likelihood function code from Carvell papeir for the full dataset (all lineages)
+###
+totlike <- function(x, F, N) {
 
-tpois <- function(a, lam){
-  dpois(a, lam)/(1 - dpois(0, lam))
-}
+  phi  <- ilt(x[1:2])       # phi1, phi2
+  lambda <- exp(x[3:4])     # lambda1, lambda2
 
-totlike_cov <- function(x, F, N, X){
+  p1 <- 1 - dpois(0, lambda[1])
+  p2 <- 1 - dpois(0, lambda[2])
 
-  phi1 <- ilt(x[1])
-  beta0 <- x[2]
-  beta1 <- x[3]
-  lambda <- exp(x[4:5])
+  chi <- rep(1, 3)
+  chi[2] <- (1 - phi[2]) + phi[2] * dpois(0, lambda[2])
+  chi[1] <- (1 - phi[1]) + phi[1] * dpois(0, lambda[1]) * chi[2]
 
-  phi2 <- ilt(beta0 + beta1 * X)
+  logL <- 0
 
-  n <- nrow(F)
-  part1 <- rep(0, n)
+  for (i in 1:nrow(F)) {
 
-  for (i in 1:n){
+    fi <- min(which(F[i,] == 1))
+    li <- max(which(F[i,] == 1))
 
-    cf <- min(which(F[i,] == 1))
-    cl <- max(which(F[i,] == 1))
+    # queens year 1
+    if (fi == 1 && li == 1)
+      logL <- logL + log(chi[1])
 
-    chi3 <- 1
-    chi2 <- (1 - phi2[i]) + phi2[i] * dpois(0, lambda[2])
-    chi1 <- (1 - phi1) + phi1 * dpois(0, lambda[1]) * chi2
+    # q1 -> w1 
+    if (fi == 1 && li == 2)
+      logL <- logL + log(phi[1] * dpois(N[i,2], lambda[1]) * chi[2])
 
-    if (cf == 1 & cl == 1){
-      part1[i] <- log(chi1)
-    }
+    # q1 -> w1 -> q2
+    if (fi == 1 && li == 3)
+      logL <- logL + log(phi[1] * dpois(N[i,2], lambda[1]) *
+                         phi[2] * dpois(N[i,3], lambda[2]))
 
-    if (cf == 1 & cl == 2){
-      part1[i] <- log(phi1 * dpois(N[i,2], lambda[1]) * chi2)
-    }
+    # workers yr 1
+    if (fi == 2 && li == 2)
+      logL <- logL + log(tpois(N[i,2], lambda[1]) * chi[2])
 
-    if (cf == 1 & cl == 3){
-      part1[i] <- log(phi1 * dpois(N[i,2], lambda[1]) *
-                      phi2[i] * dpois(N[i,3], lambda[2]))
-    }
+    # w1 -> q2
+    if (fi == 2 && li == 3)
+      logL <- logL + log(tpois(N[i,2], lambda[1]) *
+                         phi[2] * dpois(N[i,3], lambda[2]))
 
-    if (cf == 2 & cl == 2){
-      part1[i] <- log(tpois(N[i,2], lambda[1]) * chi2)
-    }
-
-    if (cf == 2 & cl == 3){
-      part1[i] <- log(tpois(N[i,2], lambda[1]) *
-                      phi2[i] * dpois(N[i,3], lambda[2]))
-    }
-
-    if (cf == 3 & cl == 3){
-      part1[i] <- log(tpois(N[i,3], lambda[2]))
-    }
+    # queens yr 2
+    if (fi == 3 && li == 3)
+      logL <- logL + log(dpois(N[i,3], lambda[2]))
   }
 
-  return(-sum(part1))
+  return(-logL)  # returning neg log likelihood to maximize
+}
+
+
+```
+
+```{r}
+##
+# 4 - fit the model using total likelihood function AKA 'Model A' from Carvell
+##
+
+
+# start values from Carvell code 
+xstart <- c(0.3, 0.3, 0.1, 0.1) + rnorm(4, 0, 0.1)
+
+#optimizer function
+# optim function is part of the stats package
+res <- optim(
+  par = xstart, 
+  fn = totlike,
+  F = F,
+  N = N,
+  control = list(maxit = 50000, reltol = 1e-10),
+  hessian = TRUE
+)
+
+glimpse(res)
+
+##
+# 5 - extract the parameters!
+##
+
+phi  <- ilt(res$par[1:2])     #survival param
+lambda <- exp(res$par[3:4])   #mean estimated worker count
+
+p1_raw <- 1 - exp(-lambda[1]) #recapture probs
+p2_raw <- 1 - exp(-lambda[2])
+
+phi1 <- phi[1]
+p1   <- p1_raw
+
+phi2 <- p2_raw #switching here, see below explanation
+p2   <- phi[2]  
+
+
+##
+# 6 - print out the model fit  results
+##
+
+phi1; p1; phi2; p2
+
+#### encountered the first issue in the replication here...
+#### the phi 2 and p2 values seem to be accurate but swapped from the reported values in the paper
+#### to keep things consistent with Carvell, for now swapping names of phi2 and p2
+
+```
+
+```{r}
+#figures here
+
+
+```
+
+As described above, I was able to recreate the model output successfully-ish from the provided code. However, it seems that phi 2 (survival probability from W2 –\> Q2) and p2 are flipped from what was reported in the paper. I proceeded with just switching the value names for now, but this is an important difference to note.
+
+Running the above analysis was mostly just to verify that the provided code was working correctly in outputting the global model, which gave us the global values for survival and detection between the two time points across all detected family lineages.
+
+However, we cannot regress on these above outputs (they are just single values, not lineage-specific) so we have to modify this to be able to do logistic regression. I'll be modifying the main global model in slight ways in the following analyses to try and get at the main questions about lineage survival in the paper!
+
+#### Estimating Regression Coefficients
+
+Now, we can move on to the analysis of interest, comparing a baseline null model to a model with a habitat covariate, where we actually estimate the regression coefficients via maximum likelihood (the same model framework we ran above but with beta0 and beta1) as computed by
+
+```         
+phi2_i <- plogis(beta0 + beta1 * X)
+```
+
+apr 14
+
+```{r}
+
+N <- as.matrix(d_sub[, c("Q1", "W1", "Q2")])
+F <- (N > 0) * 1
+
+X <- d_sub$'1000.Mixed.Vegetation'
+```
+
+Modified global likelihood model from above. I modified because whereas before we were estimating all relevant parameters for all detected lineages regardless of raw capture rates, here we are biasing our data because we are only interested in lineages for which W1 \> 1. Again, we are limiting the data in this way because colony location can only be estimated for lineages where W1 \> 1. So, we cannot accurately estimate all parameters. For example, we cannot estimate phi(1) (lineage survival from Q1 –\> W1) because all workers in this subset of the data survived to produce workers. Phi(2) is therefore the only survival parameter left to estimate.
+
+```{r}
+#baseline likelihood
+
+loglik_base <- function(par, F, N) {
+
+  phi2 <- ilt(par[1])  # other model estimates both phi1,2, but here phi1 removed.
+
+  lambda1 <- exp(par[2])
+  lambda2 <- exp(par[3]) 
+
+  chi3 <- 1 #by default as per supplement
+
+  chi2 <- (1 - phi2) + phi2 * exp(-lambda2)
+  # Chi1 is gone because phi1 is gone
+
+  logL <- 0
+
+  for (i in 1:nrow(F)) {
+
+    fi <- min(which(F[i,] == 1))
+    li <- max(which(F[i,] == 1))
+
+    if (fi == 2 && li == 2)
+      logL <- logL + log(tpois(N[i,2], lambda1) * chi2) #truncated Poisson 
+
+    if (fi == 2 && li == 3)
+      logL <- logL + log(tpois(N[i,2], lambda1) *
+                         phi2 *
+                         dpois(N[i,3], lambda2)) #phi1 removed here
+
+    if (fi == 3 && li == 3)
+      logL <- logL + log(dpois(N[i,3], lambda2))
+      # phi1 and chi1 removed 
+  }
+
+  return(-logL)
+}
+
+
+```
+
+```{r}
+# habitat regression likelihood
+loglik_cov <- function(par, F, N, X) {
+
+  beta0 <- par[1]
+  beta1 <- par[2]
+
+  phi2_i <- plogis(beta0 + beta1 * X) #phi2 depends on hab covariate X, also per lineage
+  
+
+  lambda1 <- exp(par[3])
+  lambda2 <- exp(par[4]) #same as before
+
+  chi3 <- 1
+
+  chi2_i <- (1 - phi2_i) + phi2_i * exp(-lambda2)
+  # chi2 now varies by colony because phi is estimated the same, no chi1 bc w1>1
+
+  logL <- 0
+
+  for (i in 1:nrow(F)) {
+
+    fi <- min(which(F[i,] == 1))
+    li <- max(which(F[i,] == 1))
+
+    if (fi == 2 && li == 2)
+      logL <- logL + log(tpois(N[i,2], lambda1) * chi2_i[i])#trunc poisson as before
+
+    if (fi == 2 && li == 3)
+      logL <- logL + log(tpois(N[i,2], lambda1) *
+                         phi2_i[i] *
+                         dpois(N[i,3], lambda2))
+
+    if (fi == 3 && li == 3)
+      logL <- logL + log(dpois(N[i,3], lambda2))
+  }
+
+  return(-logL)
 }
 ```
 
-fit model
-
 ```{r}
-xstart <- c(0, 0, 0, 1, 1)
+# fit baseline 
+start_base <- c(qlogis(0.6), log(4), log(1.2)) # qlogis = 0.6 --> starting value for estimating phi is 0.6 survival prob, log(4) = starting value for lambda 1 (mean worker count, reasonable for our data based on d_sub$W1), log(1.2) --> starting val for lambda2 (mean new queens, fewer numbers bc lower detection in the same lineage).
 
-res <- optim(xstart, totlike_cov,
-             F = F, N = N, X = X,
-             hessian = TRUE,
-             control = list(maxit = 50000, reltol = 1e-10))
+res_base <- optim(
+  par = start_base,
+  fn = loglik_base,
+  F = F,
+  N = N,
+  control = list(maxit = 50000, reltol = 1e-10)
+)
+
 ```
 
-test habitat effect
-
 ```{r}
+# fit habitat 
+start_cov <- c(0, 0, log(4), log(1.2)) # logs same as above, zeros correspond to estimates for coefficients B1 and B2, which each start at zero starting at survival rate of phi2=0.5 with no effect of habitat covariate (when you plug into the logit equation, as per Carvell supplementary materials)
 
-beta1_hat <- res$par[3]
+res_cov <- optim(
+  par = start_cov,
+  fn = loglik_cov,
+  F = F,
+  N = N,
+  X = X,
+  control = list(maxit = 50000, reltol = 1e-10)
+)
 
-# standard error
-vcov <- solve(res$hessian)
-se_beta1 <- sqrt(vcov[3,3])
-
-z <- beta1_hat / se_beta1
-p_value <- 2 * (1 - pnorm(abs(z)))
-
-beta1_hat
-p_value
 ```
 
-figure
+#### Likelihood Ratio Test
+
+Tried to do a likelihood ratio test using lrtest() on the model outputs but couldn't get it to work because not using a standard function like I am familiar with:
 
 ```{r}
-x_seq <- seq(min(X), max(X), length.out = 100)
+# converting optim() output to be usable with lrtest()
+#logLik_base <- structure(
+#  -res_base$value,
+#  class = "logLik",
+#  df = length(res_base$par),
+#  nobs = nrow(F)
+#)
 
-beta0_hat <- res$par[2]
-beta1_hat <- res$par[3]
+#logLik_cov <- structure(
+#  -res_cov$value,
+#  class = "logLik",
+#  df = length(res_cov$par),
+#  nobs = nrow(F)
+#)
 
-phi2_pred <- ilt(beta0_hat + beta1_hat * x_seq)
+#str(logLik_base)
+#str(logLik_cov)
 
-plot(x_seq, phi2_pred, type = "l", lwd = 3,
-     xlab = "Habitat",
-     ylab = "Survival probability (phi2)")
+
+#library(lmtest)
+#lr <- lrtest(logLik_base, logLik_cov)
+
+```
+
+Manually doing a likelihood test and p-value
+
+```{r}
+
+LL_base <- -res_base$value
+LL_cov  <- -res_cov$value
+
+# print out LL values of each model - are they the same as in the paper?
+cat("LogLik (base):", LL_base, "\n") 
+cat("LogLik (cov): ", LL_cov,  "\n")
+
+# LL values are not the exact same as in the paper
+
+LR <- 2 * (LL_cov - LL_base)
+
+df <- length(res_cov$par) - length(res_base$par)
+p_value <- 1 - pchisq(LR, df)
+
+
+#print LR stat and p-value
+cat("LR statistic: ", LR,      "\n")
+cat("p-value:      ", p_value, "\n")
+cat("df:      ", df, "\n")
+
+```
+
+Plotting:
+
+```{r}
+###### Preparing to plot...
+
+# pulling out beta0 and beta1 estimates
+beta0 <- res_cov$par[1]
+beta1 <- res_cov$par[2]
+
+phi2_hat <- plogis(beta0 + beta1 * X) # computes phi2 (survival) for each lineage (row) so length should = 456
+length(phi2_hat)
+#456 colonies - good!
+
+######################################################################################
+# PLOTTING
+
+# We already have the regression coefficients above, so we are just using the below code to make a plot and get the confidence intervals out and such. We are just using glm() to get SE, CIs, and a curve.
+# As a reminder, we care not actually regressing on phi2 with regular glm() or lm() because it's not *observed* in our original dataset d, but *model-generated*!!!
+
+library(ggplot2)
+
+newdat <- data.frame(
+  X = seq(min(X), max(X), length.out = 200)
+) # just making a data frame so we can visualize the model output phi for many bins within the range of our habitat variable (here as X).
+
+glimpse(newdat)
+ 
+
+pred <- predict(
+  glm(phi2_hat ~ X, family = binomial(link = "logit")),
+  newdata = newdat,
+  type = "link",
+  se.fit = TRUE
+) #so we can get CIs
+
+#converting from logit function (in pred) 
+newdat$fit <- plogis(pred$fit)
+newdat$lwr <- plogis(pred$fit - 1.96 * pred$se.fit)
+newdat$upr <- plogis(pred$fit + 1.96 * pred$se.fit)
+
+#PLOT!
+ggplot() +
+  geom_point(aes(X, phi2_hat), alpha = 0.4) +
+  geom_line(data = newdat, aes(X, fit), linewidth = 1.2) +
+  geom_ribbon(data = newdat, aes(X, ymin = lwr, ymax = upr), alpha = 0.2) +
+  labs(
+    x = "% Semi-Natural Habitat in 1000-m Radius of Colony",
+    y = "Survival probability"
+  ) +
+  theme_classic()
+
 ```
