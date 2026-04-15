@@ -39,7 +39,7 @@ I will be replicating main regression analysis they did to look at the relations
 
 ### Replication Code
 
-#### Loading in the data 
+#### Loading in the data
 
 ```{r}
 library(tidyverse)
@@ -421,10 +421,10 @@ cat("df:      ", df, "\n")
 
 ```
 
-Plotting:
+#### Regression Plot
 
 ```{r}
-###### Preparing to plot...
+###### Preparing to plot
 
 # pulling out beta0 and beta1 estimates
 beta0 <- res_cov$par[1]
@@ -454,7 +454,7 @@ pred <- predict(
   newdata = newdat,
   type = "link",
   se.fit = TRUE
-) #so we can get CIs
+) # just so we can get CIs etc.
 
 #converting from logit function (in pred) 
 newdat$fit <- plogis(pred$fit)
@@ -472,4 +472,5 @@ ggplot() +
   ) +
   theme_classic()
 
+#X-axis is off by one zero 
 ```
